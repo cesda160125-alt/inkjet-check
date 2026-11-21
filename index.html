@@ -319,7 +319,7 @@ textarea.code { width: 100%; min-height: 120px; resize: vertical; font-family: u
 <header class="itail-topbar">
   <div class="wrap">
     <h1>ตรวจเทียบโค้ด Inkjet กับไฟล์ข้อมูล</h1>
-    <p>ถ่ายรูปโค้ดบนบรรจุภัณฑ์ แล้วเทียบกับ PDF ล่าสุดในโฟลเดอร์ที่เชื่อมไว้</p>
+    <p>ถ่ายรูปโค้ดบนบรรจุภัณฑ์ แล้วเทียบกับ PDF ล่าสุดในโฟลเดอร์ที่เชื่อมไว้ <small style="opacity:.7">· v7-ios</small></p>
   </div>
 </header>
 
@@ -491,17 +491,36 @@ async function clearDirHandle() {
    pdf.js (ฝังในไฟล์)
    ===================================================================== */
 let pdfjsPromise = null;
-function b64ToBlobUrl(b64, type) {
+// ตัวช่วยสำหรับ Safari/iOS: ใส่ฟังก์ชันที่ตัวอ่าน PDF ต้องใช้แต่เบราว์เซอร์ยังไม่มี (ใส่ทั้งในหน้าหลักและใน worker)
+const APP_BUILD = 'v7-ios';
+const POLY_SRC = `(function(){var F=false;
+if(typeof ReadableStream!=='undefined'&&(F||!ReadableStream.prototype[Symbol.asyncIterator])){ReadableStream.prototype.values=async function*(){var r=this.getReader();try{for(;;){var x=await r.read();if(x.done)return;yield x.value}}finally{r.releaseLock()}};ReadableStream.prototype[Symbol.asyncIterator]=ReadableStream.prototype.values}
+if(F||typeof Promise.withResolvers!=='function'){Promise.withResolvers=function(){var a,b,p=new Promise(function(y,n){a=y;b=n});return{promise:p,resolve:a,reject:b}}}
+if(F||typeof Promise.try!=='function'){Promise.try=function(f){var a=[].slice.call(arguments,1);return new Promise(function(y){y(f.apply(this,a))})}}
+if(!Array.prototype.at){Array.prototype.at=function(i){i=Math.trunc(i)||0;if(i<0)i+=this.length;return this[i]}}
+if(!Object.hasOwn){Object.hasOwn=function(o,k){return Object.prototype.hasOwnProperty.call(o,k)}}
+if(typeof structuredClone!=='function'){self.structuredClone=function(v){return v}}
+if(!Array.fromAsync){Array.fromAsync=async function(it){var o=[];for await(var x of it)o.push(x);return o}}
+if(!Object.groupBy){Object.groupBy=function(it,f){var o=Object.create(null),i=0;for(var x of it){var k=f(x,i++);(o[k]=o[k]||[]).push(x)}return o}}
+if(!Map.groupBy){Map.groupBy=function(it,f){var m=new Map(),i=0;for(var x of it){var k=f(x,i++);if(!m.has(k))m.set(k,[]);m.get(k).push(x)}return m}}
+if(!Uint8Array.prototype.toHex){Uint8Array.prototype.toHex=function(){var s='';for(var i=0;i<this.length;i++)s+=(this[i]<16?'0':'')+this[i].toString(16);return s}}
+})();
+`;
+function b64ToBlobUrl(b64, type, prefix) {
   const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const pre = prefix ? new TextEncoder().encode(prefix) : new Uint8Array(0);
+  const bytes = new Uint8Array(pre.length + bin.length);
+  bytes.set(pre, 0);
+  for (let i = 0; i < bin.length; i++) bytes[pre.length + i] = bin.charCodeAt(i);
   return URL.createObjectURL(new Blob([bytes], { type }));
 }
 function getPdfjs() {
   if (!pdfjsPromise) {
     pdfjsPromise = (async () => {
-      const mainUrl = b64ToBlobUrl($('lib-pdf-main').textContent.trim(), 'text/javascript');
-      const workerUrl = b64ToBlobUrl($('lib-pdf-worker').textContent.trim(), 'text/javascript');
+      if (/[?&]poly=1/.test(location.search)) self.__forcePoly = true;
+      (0, eval)(self.__forcePoly ? POLY_SRC.replace('var F=false', 'var F=true') : POLY_SRC);
+      const mainUrl = b64ToBlobUrl($('lib-pdf-main').textContent.trim(), 'text/javascript', self.__forcePoly ? POLY_SRC.replace('var F=false', 'var F=true') : POLY_SRC);
+      const workerUrl = b64ToBlobUrl($('lib-pdf-worker').textContent.trim(), 'text/javascript', self.__forcePoly ? POLY_SRC.replace('var F=false', 'var F=true') : POLY_SRC);
       const lib = await import(mainUrl);
       lib.GlobalWorkerOptions.workerSrc = workerUrl;
       return lib;
@@ -1043,8 +1062,21 @@ async function loadPdfFile(file, key, source) {
   } catch (err) {
     if (token !== S.loadToken) return;
     console.error(err);
-    setPdfStatus('อ่านไฟล์ ' + file.name + ' ไม่สำเร็จ: ' + (err && err.message || err) + ' (ถ้าไฟล์อยู่บน OneDrive ให้ตั้งเป็น “เก็บไว้ในเครื่องเสมอ” แล้วลองใหม่)', 'bad');
+    setPdfStatus('อ่านไฟล์ ' + file.name + ' ไม่สำเร็จ: ' + (err && err.message || err) + ' (ถ้าไฟล์อยู่บน OneDrive ให้ตั้งเป็น “เก็บไว้ในเครื่องเสมอ” แล้วลองใหม่)' + diagInfo(err), 'bad');
   }
+}
+// ข้อมูลช่วยหาสาเหตุ: เวอร์ชันแอป ฟังก์ชันที่เบราว์เซอร์นี้ไม่มี และบรรทัดที่พัง
+function diagInfo(err) {
+  const miss = []; try {
+    if (typeof ReadableStream === 'undefined' || !ReadableStream.prototype[Symbol.asyncIterator]) miss.push('ReadableStream.asyncIterator');
+    if (typeof Promise.withResolvers !== 'function') miss.push('Promise.withResolvers');
+    if (typeof Promise.try !== 'function') miss.push('Promise.try');
+    if (!Array.fromAsync) miss.push('Array.fromAsync');
+    if (!Uint8Array.prototype.toHex) miss.push('Uint8Array.toHex');
+    if (!Object.groupBy) miss.push('Object.groupBy');
+  } catch (e) {}
+  const st = ((err && err.stack) || '').split('\n').slice(0, 3).map(x => x.slice(0, 90)).join(' | ');
+  return ` [เวอร์ชัน ${APP_BUILD}${miss.length ? ' · เบราว์เซอร์ไม่มี: ' + miss.join(', ') : ''}${st ? ' · ' + st : ''}]`;
 }
 
 /* =====================================================================
