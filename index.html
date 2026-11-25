@@ -270,17 +270,17 @@ textarea.code { width: 100%; min-height: 120px; resize: vertical; font-family: u
 .pc-f { display: inline-flex; gap: 8px; align-items: baseline; font-size: 14px; }
 .pc-k { color: #475467; }
 .pc-shift { background: #ffb3ff; padding: 0 18px; }
-.pc-tbl { display: grid; min-width: 640px; }
+.pc-tbl { display: grid; min-width: min(100%, 640px); }
 .pc-tbl > div { border-top: 1px solid #98a2b3; border-left: 1px solid #98a2b3; }
 .pc-th { background: #f2f4f7; font-weight: 700; font-size: 13px; text-align: center; padding: 6px 12px; }
 .pc-no { font-weight: 700; font-size: 18px; padding: 6px 10px; }
-.pc-code { padding: 4px 6px; }
+.pc-code { padding: 4px 6px; min-width: 0; overflow-x: auto; }
 .pc-line { display: flex; }
 .pc-cell { flex: 0 0 22px; height: 26px; border: 1px solid #667085; margin: 0 -1px -1px 0; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 16px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
 .pc-line.aux { background: #e4e7ec; } .pc-line.aux .pc-cell { font-style: italic; font-weight: 400; color: #475467; }
 .pc-read { white-space: pre-wrap; font-size: 15px; margin: 3px 0 8px 2px; font-family: ui-monospace, Menlo, Consolas, monospace; letter-spacing: .05em; }
 .pc-rk { font-family: inherit; font-size: 11px; color: #667085; margin-right: 8px; letter-spacing: 0; }
-.pc-side { padding: 6px 12px; text-align: center; min-width: 90px; }
+.pc-side { padding: 6px 10px; text-align: center; min-width: 0; overflow-wrap: anywhere; }
 .pc-ref { font-size: 12px; color: #475467; text-align: left; }
 .pc-v { font-size: 16px; font-weight: 700; }
 .pc-ex { font-size: 12px; color: #344054; margin-top: 4px; }
@@ -319,7 +319,7 @@ textarea.code { width: 100%; min-height: 120px; resize: vertical; font-family: u
 <header class="itail-topbar">
   <div class="wrap">
     <h1>ตรวจเทียบโค้ด Inkjet กับไฟล์ข้อมูล</h1>
-    <p>ถ่ายรูปโค้ดบนบรรจุภัณฑ์ แล้วเทียบกับ PDF ล่าสุดในโฟลเดอร์ที่เชื่อมไว้ <small style="opacity:.7">· v8</small></p>
+    <p>ถ่ายรูปโค้ดบนบรรจุภัณฑ์ แล้วเทียบกับ PDF ล่าสุดในโฟลเดอร์ที่เชื่อมไว้ <small style="opacity:.7">· v9</small></p>
   </div>
 </header>
 
@@ -492,7 +492,7 @@ async function clearDirHandle() {
    ===================================================================== */
 let pdfjsPromise = null;
 // ตัวช่วยสำหรับ Safari/iOS: ใส่ฟังก์ชันที่ตัวอ่าน PDF ต้องใช้แต่เบราว์เซอร์ยังไม่มี (ใส่ทั้งในหน้าหลักและใน worker)
-const APP_BUILD = 'v8-free';
+const APP_BUILD = 'v9-cols';
 const POLY_SRC = `(function(){var F=false;
 if(typeof ReadableStream!=='undefined'&&(F||!ReadableStream.prototype[Symbol.asyncIterator])){ReadableStream.prototype.values=async function*(){var r=this.getReader();try{for(;;){var x=await r.read();if(x.done)return;yield x.value}}finally{r.releaseLock()}};ReadableStream.prototype[Symbol.asyncIterator]=ReadableStream.prototype.values}
 if(F||typeof Promise.withResolvers!=='function'){Promise.withResolvers=function(){var a,b,p=new Promise(function(y,n){a=y;b=n});return{promise:p,resolve:a,reject:b}}}
@@ -613,6 +613,18 @@ function compareLine(idx, line) {
    อ่านตาราง "Inkjet format" จาก PDF ตามตำแหน่งข้อความ (แยกแถวตามเลข NO.)
    ===================================================================== */
 const median2 = a => { const s = [...a].sort((x, y) => x - y); return s.length ? s[s.length >> 1] : 0; };
+// หาช่องว่างแนวตั้งระหว่างข้อความทั้งหมดในตาราง (ขอบคอลัมน์ที่ไม่มีเส้น/ช่อง) แล้วเลือกช่องที่กว้างที่สุดระหว่างกึ่งกลางหัวตาราง 2 คอลัมน์
+function xGaps(items) {
+  const iv = items.map(i => [i.x, i.x + i.w]).sort((a, b) => a[0] - b[0]), m = [];
+  iv.forEach(v => { const L = m[m.length - 1]; if (L && v[0] <= L[1] + 0.3) L[1] = Math.max(L[1], v[1]); else m.push([v[0], v[1]]); });
+  const g = []; for (let k = 1; k < m.length; k++) g.push([m[k - 1][1], m[k][0]]);
+  return g;
+}
+function bestBoundary(gaps, a, b, fallback) {
+  let best = null;
+  gaps.forEach(([g0, g1]) => { const mid = (g0 + g1) / 2; if (mid > a && mid < b && g1 - g0 >= 1.5 && (!best || g1 - g0 > best[1] - best[0])) best = [g0, g1]; });
+  return best ? (best[0] + best[1]) / 2 : fallback;
+}
 function parseInkjetRows(pagesItems) {
   const rows = [];
   pagesItems.forEach((items, pi) => {
@@ -636,6 +648,8 @@ function parseInkjetRows(pagesItems) {
       const noH = clean.find(i => /^no\.?$/i.test(i.s.trim()) && Math.abs(i.y - hdr.y) < medH * 4);
       const sizeH = clean.find(i => /^size$/i.test(i.s.trim()) && Math.abs(i.y - hdr.y) < medH * 4);
       inkLeft = noH ? noH.x + noH.w + 2 : hdr.x - 200; inkRight = sizeH ? sizeH.x - 2 : hdr.x + 600;
+      // ไฟล์ที่ไม่แบ่งช่อง: หัวตารางอยู่กึ่งกลางคอลัมน์ แต่ข้อความชิดซ้าย จึงหาขอบขวาของคอลัมน์ Inkjet จากช่องว่างระหว่างข้อความแทน
+      if (sizeH) inkRight = bestBoundary(xGaps(clean.filter(i => i.y < hdr.y - 0.5 * medH && i.x + i.w > inkLeft)), hdr.x + hdr.w / 2, sizeH.x + sizeH.w / 2, inkRight);
     }
     const topLimit = numY - 0.5 * medH;
     const noItems = clean.filter(i => /^\d{1,3}$/.test(i.s.trim()) && i.x + i.w <= inkLeft + 1 && i.y < topLimit).sort((a, b) => b.y - a.y);
@@ -674,7 +688,13 @@ function parseInkjetRows(pagesItems) {
     sideCols.forEach((c, k) => { c.lo = k === 0 ? inkRight - 1 : (sideCols[k - 1].c + c.c) / 2; c.hi = k + 1 < sideCols.length ? (c.c + sideCols[k + 1].c) / 2 : Infinity; });
     const side = clean.filter(i => i.x + i.w / 2 > inkRight && i.y < topLimit);
     // ค่าในแต่ละคอลัมน์ชิดซ้ายของช่อง ไม่ได้อยู่กึ่งกลางหัวตาราง: จัดกลุ่มตามตำแหน่งเริ่มต้นของข้อความแล้วจับคู่กับหัวตารางตามลำดับ
-    if (sideCols.length > 1) {
+    if (sideCols.length > 1 && nums.length < 8) {      // ไม่มีช่อง: ขอบคอลัมน์จากช่องว่างระหว่างข้อความ
+      const gp = xGaps(side);
+      sideCols.forEach((c, k) => {
+        c.lo = k === 0 ? inkRight - 1 : bestBoundary(gp, sideCols[k - 1].c, c.c, (sideCols[k - 1].c + c.c) / 2);
+        c.hi = k + 1 < sideCols.length ? bestBoundary(gp, c.c, sideCols[k + 1].c, (c.c + sideCols[k + 1].c) / 2) : Infinity;
+      });
+    } else if (sideCols.length > 1) {
       const xs = side.map(i => i.x).sort((a, b) => a - b), cl = [];
       xs.forEach(x => { const L = cl[cl.length - 1]; if (L && x - L.max < Math.max(2 * medH, 10)) L.max = x; else cl.push({ min: x, max: x }); });
       if (cl.length === sideCols.length) sideCols.forEach((c, k) => { c.lo = k === 0 ? inkRight - 1 : (cl[k - 1].max + cl[k].min) / 2; c.hi = k + 1 < cl.length ? (cl[k].max + cl[k + 1].min) / 2 : Infinity; });
@@ -714,6 +734,7 @@ function parseInkjetRows(pagesItems) {
       // ข้อมูลอื่นของแถวนี้ (ตามคอลัมน์ด้านขวา) ไม่เอาป้ายกำกับ Ink/Special claim และค่า #REF! (สูตร Excel พัง = ไม่มีข้อมูล)
       const meta = [];
       sideCols.forEach(c => {
+        if (!/^(size|packaging|line|qty|quantity)\b/i.test(c.label)) return;      // แสดงเฉพาะคอลัมน์ที่ตกลงกัน (Size, Packaging, Line, Quantity) คอลัมน์อื่นข้าม
         const its = side.filter(i => i.y <= top && i.y > bottom && i.x + 0.5 >= c.lo && i.x + 0.5 < c.hi).sort((a, b) => b.y - a.y || a.x - b.x);
         const vals = [], extra = []; let ref = false;
         const ln = []; let cur = null;
@@ -726,7 +747,7 @@ function parseInkjetRows(pagesItems) {
           if (/special|claim/i.test(t) && !/\d/.test(t)) return;
           vals.push(t);
         });
-        meta.push({ label: c.label, value: vals.join(''), ref, extra: extra.join(' ') });
+        meta.push({ label: c.label, value: vals.every(v => v.length <= 2) ? vals.join('') : vals.join(' '), ref, extra: extra.join(' ') });
       });
       rows.push({ no: no.s.trim(), page: pi + 1, lines: out, bbox, meta, doc });
     });
@@ -910,7 +931,9 @@ function evalLine(l, ocrNorms, lines) {
   else if (det.d === 0) { cls = 'warn'; txt = 'ตรวจซ้ำ (ตัวคล้าย)'; mark = '☐'; }
   else if (det.d <= maxErr) { cls = 'warn'; txt = `ใกล้เคียง (ตัวอักษรต่าง ${det.d} ตัว)` + (parts.length ? ' · ' + parts.join(' · ') : ''); mark = '☐'; }
   else { cls = 'bad'; txt = `ต่างมาก (${det.d} ตัว)`; mark = '☒'; }
-  return { det: { ...det, ops: rd.ops }, ok, cls, mark, txt, punctNote: '' };
+  const dc = rd.ops.filter(o => o.t === 'sub' && ((o.exp === '.' && o.ch === ',') || (o.exp === ',' && o.ch === '.')));
+  const punctNote = dc.length ? `จุด (.) กับจุลภาค (,) ต่างกัน ${dc.length} จุด: ในไฟล์ “${dc.map(o => o.exp).join('')}” แต่อ่านได้ “${dc.map(o => o.ch).join('')}”` : '';
+  return { det: { ...det, ops: rd.ops }, ok, cls, mark, txt, punctNote };
 }
 function renderRanking(lines, results) {
   const body = $('resultBody'); body.className = ''; body.textContent = '';
@@ -958,7 +981,7 @@ function renderRanking(lines, results) {
     const card = el('div', 'pdfcard'); const hd = el('div', 'pc-head');
     const mk = (k, v, cls) => { const sp = el('span', 'pc-f'); sp.appendChild(el('span', 'pc-k', k)); sp.appendChild(el('b', cls || '', v || '—')); return sp; };
     hd.appendChild(mk('Date', docI.date)); hd.appendChild(mk('Shift', docI.shift, 'pc-shift')); card.appendChild(hd);
-    const tbl = el('div', 'pc-tbl'); tbl.style.gridTemplateColumns = 'auto minmax(0,1fr)' + metas.map(() => ' auto').join('');
+    const tbl = el('div', 'pc-tbl'); tbl.style.gridTemplateColumns = 'auto minmax(420px,3fr)' + metas.map(m => /line/i.test(m.label) ? ' minmax(90px,.7fr)' : ' minmax(80px,1fr)').join('');
     tbl.appendChild(el('div', 'pc-th', 'No.')); tbl.appendChild(el('div', 'pc-th', 'Inkjet format')); metas.forEach(m => tbl.appendChild(el('div', 'pc-th', m.label)));
     tbl.appendChild(el('div', 'pc-no', item.r.no));
     const codeBox = el('div', 'pc-code'); const ncell = Math.max(16, ...item.r.lines.map(l => l.text.length)) + 2;
@@ -1554,7 +1577,7 @@ function loadTesseract() {
 const ALNUM = s => (s || '').replace(/[^A-Z0-9]/gi, '').length;
 // หมายเหตุ: ไม่ใช้ whitelist ตอนอ่าน เพราะ tesseract จะรายงานความมั่นใจของหลายคำเป็น 0 ทั้งที่อ่านถูก
 // แต่กรองให้เหลือ A-Z 0-9 / : . - ภายหลังแทน
-const CLEAN = s => (s || '').toUpperCase().replace(/[^A-Z0-9\/:.\-]/g, '');
+const CLEAN = s => (s || '').toUpperCase().replace(/[^A-Z0-9\/:.,\-]/g, '');
 function summarize(data) {
   const lines = []; let sc = 0, len = 0;
   if (Array.isArray(data.lines) && data.lines.length) {
