@@ -319,7 +319,7 @@ textarea.code { width: 100%; min-height: 120px; resize: vertical; font-family: u
 <header class="itail-topbar">
   <div class="wrap">
     <h1>ตรวจเทียบโค้ด Inkjet กับไฟล์ข้อมูล</h1>
-    <p>ถ่ายรูปโค้ดบนบรรจุภัณฑ์ แล้วเทียบกับ PDF ล่าสุดในโฟลเดอร์ที่เชื่อมไว้ <small style="opacity:.7">· v7-ios</small></p>
+    <p>ถ่ายรูปโค้ดบนบรรจุภัณฑ์ แล้วเทียบกับ PDF ล่าสุดในโฟลเดอร์ที่เชื่อมไว้ <small style="opacity:.7">· v8</small></p>
   </div>
 </header>
 
@@ -492,7 +492,7 @@ async function clearDirHandle() {
    ===================================================================== */
 let pdfjsPromise = null;
 // ตัวช่วยสำหรับ Safari/iOS: ใส่ฟังก์ชันที่ตัวอ่าน PDF ต้องใช้แต่เบราว์เซอร์ยังไม่มี (ใส่ทั้งในหน้าหลักและใน worker)
-const APP_BUILD = 'v7-ios';
+const APP_BUILD = 'v8-free';
 const POLY_SRC = `(function(){var F=false;
 if(typeof ReadableStream!=='undefined'&&(F||!ReadableStream.prototype[Symbol.asyncIterator])){ReadableStream.prototype.values=async function*(){var r=this.getReader();try{for(;;){var x=await r.read();if(x.done)return;yield x.value}}finally{r.releaseLock()}};ReadableStream.prototype[Symbol.asyncIterator]=ReadableStream.prototype.values}
 if(F||typeof Promise.withResolvers!=='function'){Promise.withResolvers=function(){var a,b,p=new Promise(function(y,n){a=y;b=n});return{promise:p,resolve:a,reject:b}}}
@@ -649,12 +649,17 @@ function parseInkjetRows(pagesItems) {
     const bodyH = median2(body.map(i => i.h)) || medH;
     // ข้อมูลหัวเอกสาร: วันที่ (Date) และกะ (Shift)
     const doc = { date: '', shift: '' };
-    const dateL = clean.find(i => /^date$/i.test(i.s.trim()));
+    const DRE = /\d{1,2}\s*[\/.-]\s*\d{1,2}\s*[\/.-]\s*\d{2,4}/;
+    const dateJoined = clean.find(i => /^date\b/i.test(i.s.trim()) && DRE.test(i.s));      // "Date 21/11/2026" อยู่ในข้อความเดียวกัน
+    if (dateJoined) doc.date = dateJoined.s.match(DRE)[0].replace(/\s+/g, '');
+    const dateL = doc.date ? null : clean.find(i => /^date$/i.test(i.s.trim()));
     if (dateL) {
       const dm = clean.filter(i => Math.abs(i.y - dateL.y) < medH && i.x > dateL.x && /\d{1,2}\s*[\/.-]\s*\d{1,2}\s*[\/.-]\s*\d{2,4}/.test(i.s)).sort((a, b) => a.x - b.x)[0];
       if (dm) doc.date = dm.s.match(/\d{1,2}\s*[\/.-]\s*\d{1,2}\s*[\/.-]\s*\d{2,4}/)[0].replace(/\s+/g, '');
     }
-    const shL = clean.find(i => /^shift$/i.test(i.s.trim()));
+    const shJoined = clean.find(i => /\bshift\s+([A-Za-z0-9]+)/i.test(i.s) && !/^shift$/i.test(i.s.trim()));
+    if (shJoined) doc.shift = shJoined.s.match(/\bshift\s+([A-Za-z0-9]+)/i)[1];
+    const shL = doc.shift ? null : clean.find(i => /^shift$/i.test(i.s.trim()));
     if (shL) {
       const otL = clean.find(i => /^ot$/i.test(i.s.trim()) && Math.abs(i.y - shL.y) < medH && i.x > shL.x);
       const sv = clean.filter(i => Math.abs(i.y - shL.y) < medH && i.x > shL.x + shL.w - 1 && (!otL || i.x < otL.x) && i.s.trim()).sort((a, b) => a.x - b.x)[0];
